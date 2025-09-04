@@ -1,687 +1,418 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>D'Treasures</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
-    <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #f06292 0%, #ff8a65 100%);
-            min-height: 100vh;
-        }
-        .modal-overlay {
-            background-color: rgba(0, 0, 0, 0.7);
-        }
-        .spinner {
-            border: 4px solid rgba(255, 255, 255, 0.3);
-            border-top: 4px solid #fff;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-    </style>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>D'Treasures • Cute Store</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Paystack Inline -->
+  <script src="https://js.paystack.co/v1/inline.js"></script>
+  <style>
+    :root {
+      --pink: #f472b6;
+      --pink-dark: #ec4899;
+      --rose: #fce7f3;
+      --rose-deep: #f9a8d4;
+    }
+    body { font-family: 'Poppins', system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; }
+    .btn-pink { background: var(--pink); color:#fff; }
+    .btn-pink:hover { background: var(--pink-dark); }
+    .pill { background: var(--rose); color:#be185d; border-radius: 9999px; padding: 6px 14px; cursor: pointer; transition: all .2s; border:1px solid #fbcfe8;}
+    .pill:hover { background: var(--rose-deep); color:#fff; }
+    .tab-active { background: var(--pink); color:#fff; }
+  </style>
 </head>
-<body class="flex flex-col items-center justify-start p-4 md:p-8">
-
-    <!-- Firebase SDKs -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs, deleteDoc, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        
-        // Use provided global variables
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        setLogLevel('debug'); // Enable Firestore logging
-
-        let userId = null;
-        let currentCart = [];
-        let privateUnsubscribe = null;
-        let publicUnsubscribe = null;
-        
-        // Initial authentication check on page load
-        onAuthStateChanged(auth, async (user) => {
-            const userDisplay = document.getElementById('user-display');
-            const authButton = document.getElementById('auth-button');
-            const loadingIndicator = document.getElementById('loading-indicator');
-
-            if (user) {
-                userId = user.uid;
-                userDisplay.textContent = `Welcome, ${user.email}!`;
-                if (authButton) {
-                    authButton.textContent = "Sign Out";
-                    authButton.onclick = handleSignOut;
-                }
-                
-                // Only attach the cart listener if it's not already active.
-                if (!privateUnsubscribe) {
-                    const cartCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/cart`);
-                    privateUnsubscribe = onSnapshot(cartCollectionRef, (snapshot) => {
-                        currentCart = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        updateCartCount(currentCart.length);
-                        renderCart(currentCart);
-                    }, (error) => {
-                        console.error("Error fetching cart:", error);
-                        showMessage("Failed to load your cart. Please try again.");
-                    });
-                }
-                
-                // Only attach the products listener if it's not already active.
-                if (!publicUnsubscribe) {
-                    const productsCollectionRef = collection(db, `artifacts/${appId}/public/data/products`);
-                    publicUnsubscribe = onSnapshot(productsCollectionRef, (snapshot) => {
-                        const products = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        renderProducts(products);
-                        if (loadingIndicator) loadingIndicator.classList.add('hidden');
-                    }, (error) => {
-                        console.error("Error fetching products:", error);
-                        showMessage("Failed to load products. Please check your permissions or network connection.");
-                        if (loadingIndicator) loadingIndicator.classList.add('hidden');
-                    });
-                }
-
-            } else {
-                userId = null;
-                userDisplay.textContent = `You are not signed in.`;
-                if (authButton) {
-                    authButton.textContent = "Sign In / Sign Up";
-                    authButton.onclick = () => toggleModal('auth-modal');
-                }
-                
-                if (privateUnsubscribe) {
-                    privateUnsubscribe();
-                    privateUnsubscribe = null;
-                    currentCart = [];
-                    updateCartCount(0);
-                    renderCart(currentCart);
-                }
-                if (publicUnsubscribe) {
-                    publicUnsubscribe();
-                    publicUnsubscribe = null;
-                }
-            }
-        });
-
-        // Use custom auth token if available, otherwise fall back to anonymous sign-in
-        if (initialAuthToken) {
-            signInWithCustomToken(auth, initialAuthToken).catch(error => {
-                console.error("Custom token sign-in failed:", error);
-                showMessage("Failed to sign in with custom token. Please try again.");
-            });
-        }
-        
-        // --- UI Rendering Functions ---
-        function renderProducts(products) {
-            const productGrid = document.getElementById('product-grid');
-            const addProductsBtn = document.getElementById('add-products-btn');
-            if (!productGrid) return;
-            productGrid.innerHTML = '';
-
-            if (products.length === 0) {
-                productGrid.innerHTML = `
-                    <div class="col-span-1 sm:col-span-2 lg:col-span-3 flex flex-col items-center justify-center p-8 text-gray-500">
-                        <p class="text-lg font-semibold">No products found. Click the button to add them!</p>
-                    </div>
-                `;
-                if (addProductsBtn) addProductsBtn.classList.remove('hidden');
-                return;
-            }
-
-            if (addProductsBtn) addProductsBtn.classList.add('hidden');
-
-            products.forEach(product => {
-                const card = document.createElement('div');
-                card.className = "product-card bg-white bg-opacity-90 rounded-3xl shadow-lg p-6 flex flex-col items-center transform transition-transform duration-300 hover:scale-105 hover:shadow-2xl";
-                card.innerHTML = `
-                    <img src="${product.image}" alt="${product.name}" class="w-full h-48 object-cover rounded-xl mb-4 shadow-md">
-                    <h3 class="text-xl font-bold text-gray-800 mb-1">${product.name}</h3>
-                    <p class="text-sm text-gray-500 mb-3">${product.description}</p>
-                    <p class="text-2xl font-extrabold text-pink-600 mb-4">₦${product.price.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
-                    <button class="add-to-cart-btn w-full py-3 bg-purple-600 text-white font-bold rounded-full hover:bg-purple-700 transition-colors transform hover:scale-105 active:scale-95 duration-200">
-                        Add to Cart
-                    </button>
-                `;
-                const addToCartBtn = card.querySelector('.add-to-cart-btn');
-                addToCartBtn.dataset.productId = product.id;
-                addToCartBtn.dataset.productName = product.name;
-                addToCartBtn.dataset.productPrice = product.price;
-                addToCartBtn.addEventListener('click', addToCart);
-                productGrid.appendChild(card);
-            });
-        }
-
-        function updateCartCount(count) {
-            const cartCountElement = document.getElementById('cart-count');
-            if (cartCountElement) {
-                cartCountElement.textContent = count;
-                cartCountElement.classList.toggle('hidden', count === 0);
-            }
-        }
-        
-        function renderCart(cartItems) {
-            const cartList = document.getElementById('cart-list');
-            const cartTotal = document.getElementById('cart-total');
-            const checkoutBtn = document.getElementById('checkout-button');
-            if (!cartList || !cartTotal || !checkoutBtn) return;
-
-            cartList.innerHTML = '';
-            let total = 0;
-
-            if (cartItems.length === 0) {
-                cartList.innerHTML = '<p class="text-center text-gray-500">Your cart is empty!</p>';
-                checkoutBtn.classList.add('hidden');
-            } else {
-                checkoutBtn.classList.remove('hidden');
-                cartItems.forEach(item => {
-                    total += item.price * item.quantity;
-                    const listItem = document.createElement('li');
-                    listItem.className = "flex justify-between items-center py-2 border-b border-gray-200";
-                    listItem.innerHTML = `
-                        <div class="flex items-center space-x-4">
-                            <span class="font-bold">${item.name}</span>
-                            <span class="text-sm text-gray-500">x${item.quantity}</span>
-                        </div>
-                        <span class="font-bold text-gray-700">₦${(item.price * item.quantity).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
-                    `;
-                    cartList.appendChild(listItem);
-                });
-            }
-            cartTotal.textContent = `₦${total.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
-            updateCheckoutSummary(cartItems);
-        }
-
-        function updateCheckoutSummary(cartItems) {
-            const summaryList = document.getElementById('checkout-summary-list');
-            const summaryTotal = document.getElementById('checkout-total');
-            if (!summaryList || !summaryTotal) return;
-            let total = 0;
-            summaryList.innerHTML = '';
-            cartItems.forEach(item => {
-                total += item.price * item.quantity;
-                const listItem = document.createElement('li');
-                listItem.className = "flex justify-between items-center py-2 border-b border-gray-200";
-                listItem.innerHTML = `
-                    <span class="text-sm text-gray-700">${item.name} (x${item.quantity})</span>
-                    <span class="text-sm text-gray-700">₦${(item.price * item.quantity).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
-                `;
-                summaryList.appendChild(listItem);
-            });
-            summaryTotal.textContent = `₦${total.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
-        }
-
-        // --- Event Handlers ---
-        async function addToCart(e) {
-            if (!userId) {
-                showMessage("Please sign in to add items to your cart.");
-                return;
-            }
-            const productId = e.target.dataset.productId;
-            const productName = e.target.dataset.productName;
-            const productPrice = parseFloat(e.target.dataset.productPrice);
-            
-            const cartDocRef = doc(db, `artifacts/${appId}/users/${userId}/cart`, productId);
-            const cartDoc = await getDoc(cartDocRef);
-
-            if (cartDoc.exists()) {
-                const currentQuantity = cartDoc.data().quantity;
-                await setDoc(cartDocRef, { quantity: currentQuantity + 1, name: productName, price: productPrice });
-                showMessage(`${productName} quantity updated!`);
-            } else {
-                await setDoc(cartDocRef, { quantity: 1, name: productName, price: productPrice });
-                showMessage(`${productName} added to cart!`);
-            }
-        }
-
-        // --- New Checkout Logic ---
-        async function handleCheckout() {
-            if (currentCart.length === 0) {
-                showMessage("Your cart is empty. Please add items to checkout.");
-                return;
-            }
-            
-            const selectedPaymentMethod = document.querySelector('input[name="payment-method"]:checked').value;
-            const payButton = document.getElementById('pay-now-button');
-            if (!payButton) return;
-
-            if (selectedPaymentMethod === 'bank-transfer') {
-                payButton.textContent = "Confirm Payment";
-                payButton.onclick = confirmPayment;
-            } else {
-                payButton.textContent = "Pay Now";
-                payButton.onclick = confirmPayment;
-            }
-        }
-        
-        async function confirmPayment() {
-            const payButton = document.getElementById('pay-now-button');
-            if (!payButton) return;
-            payButton.innerHTML = `<div class="spinner !w-6 !h-6 !border-white !border-t-transparent mx-auto"></div>`;
-            payButton.disabled = true;
-
-            // Simulate payment processing
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-            try {
-                // Clear the cart
-                await clearCart();
-                showMessage("Payment successful! Your order has been placed.");
-                toggleModal('checkout-modal');
-            } catch (error) {
-                showMessage(`Payment failed: ${error.message}`);
-            } finally {
-                if (payButton) {
-                    payButton.textContent = "Pay Now";
-                    payButton.disabled = false;
-                }
-            }
-        }
-
-        async function copyAccountNumber() {
-            const accountNumberElement = document.getElementById('account-number');
-            if (!accountNumberElement) return;
-            const accountNumber = accountNumberElement.textContent;
-            try {
-                // Use document.execCommand('copy') for better compatibility in iframes
-                const el = document.createElement('textarea');
-                el.value = accountNumber;
-                document.body.appendChild(el);
-                el.select();
-                document.execCommand('copy');
-                document.body.removeChild(el);
-                showMessage("Account number copied!");
-            } catch (err) {
-                console.error('Failed to copy text: ', err);
-                showMessage("Failed to copy account number.");
-            }
-        }
-
-        async function clearCart() {
-            if (!userId) return;
-            const cartCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/cart`);
-            const cartSnapshot = await getDocs(cartCollectionRef);
-            const deletePromises = cartSnapshot.docs.map(d => deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/cart`, d.id)));
-            await Promise.all(deletePromises);
-        }
-
-        function showMessage(message) {
-            const messageBox = document.getElementById('message-box');
-            const messageText = document.getElementById('message-text');
-            if (!messageBox || !messageText) return;
-            messageText.textContent = message;
-            messageBox.classList.remove('opacity-0', '-translate-y-full');
-            messageBox.classList.add('opacity-100', 'top-4');
-            setTimeout(() => {
-                messageBox.classList.remove('opacity-100', 'top-4');
-                messageBox.classList.add('opacity-0', '-translate-y-full');
-            }, 3000);
-        }
-        
-        // --- Modal Control ---
-        function toggleModal(modalId) {
-            const modal = document.getElementById(modalId);
-            if (modal) {
-                modal.classList.toggle('hidden');
-            }
-        }
-        
-        function openCheckoutModal() {
-            toggleModal('cart-modal');
-            toggleModal('checkout-modal');
-        }
-
-        // Toggles visibility of payment details based on radio button selection
-        function togglePaymentDetails() {
-            const cardDetails = document.getElementById('card-details-section');
-            const bankDetails = document.getElementById('bank-details-section');
-            if (!cardDetails || !bankDetails) return;
-
-            const selectedMethod = document.querySelector('input[name="payment-method"]:checked').value;
-            if (selectedMethod === 'bank-transfer') {
-                bankDetails.classList.remove('hidden');
-                cardDetails.classList.add('hidden');
-            } else {
-                bankDetails.classList.add('hidden');
-                cardDetails.classList.remove('hidden');
-            }
-        }
-
-        // --- Auth Functions ---
-        async function handleAuth(event) {
-            event.preventDefault();
-            const form = event.target;
-            const email = form.email.value;
-            const password = form.password.value;
-            const isSignUp = form.id === 'signup-form';
-            
-            try {
-                if (isSignUp) {
-                    await createUserWithEmailAndPassword(auth, email, password);
-                    showMessage("Account created successfully! Signed in.");
-                } else {
-                    await signInWithEmailAndPassword(auth, email, password);
-                    showMessage("Signed in successfully!");
-                }
-                toggleModal('auth-modal');
-            } catch (error) {
-                console.error("Authentication failed:", error.code);
-                let message = "Authentication failed. Please check your credentials.";
-                if (error.code === 'auth/email-already-in-use') {
-                    message = "This email is already in use. Please sign in instead.";
-                } else if (error.code === 'auth/invalid-email') {
-                    message = "Invalid email address.";
-                } else if (error.code === 'auth/weak-password') {
-                    message = "Password should be at least 6 characters.";
-                } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
-                    message = "Invalid email or password.";
-                }
-                showMessage(message);
-            }
-        }
-        
-        async function handleSignOut() {
-            try {
-                await signOut(auth);
-                showMessage("Logged out successfully!");
-            } catch (error) {
-                showMessage(`Logout failed: ${error.message}`);
-            }
-        }
-
-        async function addInitialProducts() {
-            const addProductsBtn = document.getElementById('add-products-btn');
-            if (addProductsBtn) addProductsBtn.disabled = true;
-
-            const productsCollectionRef = collection(db, `artifacts/${appId}/public/data/products`);
-            const snapshot = await getDocs(productsCollectionRef);
-            if (!snapshot.empty) {
-                showMessage("Products already exist. No new products were added.");
-                if (addProductsBtn) addProductsBtn.disabled = false;
-                return;
-            }
-            
-            const initialProducts = [
-                { name: "Crimson Velvet Scarf", price: 2500, description: "Luxurious silk-blend scarf in deep crimson.", image: "https://placehold.co/400x400/961d36/FFFFFF?text=Velvet+Scarf" },
-                { name: "Midnight Diamond Earrings", price: 15000, description: "Hand-crafted earrings with a subtle sparkle.", image: "https://placehold.co/400x400/2C2C34/FFFFFF?text=Earrings" },
-                { name: "Rose Gold Locket", price: 4500, description: "A delicate locket for treasured memories.", image: "https://placehold.co/400x400/B87333/FFFFFF?text=Locket" },
-                { name: "Pearl Cascade Necklace", price: 8500, description: "A timeless necklace with freshwater pearls.", image: "https://placehold.co/400x400/B5B5A5/FFFFFF?text=Necklace" },
-                { name: "Obsidian Onyx Ring", price: 6000, description: "Bold and elegant, with a polished onyx stone.", image: "https://placehold.co/400x400/36454F/FFFFFF?text=Onyx+Ring" },
-                { name: "Azure Blue Silk Bag", price: 9500, description: "A chic clutch bag from exquisite azure silk.", image: "https://placehold.co/400x400/007FFF/FFFFFF?text=Silk+Bag" },
-                { name: "Emerald Stud Earrings", price: 3200, description: "Classic studs with a vibrant emerald hue.", image: "https://placehold.co/400x400/046A38/FFFFFF?text=Emerald+Earrings" },
-                { name: "Silver Plated Bracelet", price: 1800, description: "Delicate and sleek, perfect for everyday wear.", image: "https://placehold.co/400x400/C0C0C0/000000?text=Silver+Bracelet" },
-                { name: "Boho Tassel Keychain", price: 500, description: "A fun and stylish accessory for your keys.", image: "https://placehold.co/400x400/F08080/FFFFFF?text=Keychain" },
-                { name: "Leopard Print Clutch", price: 3900, description: "A bold statement clutch for a wild look.", image: "https://placehold.co/400x400/808000/FFFFFF?text=Leopard+Clutch" },
-                { name: "Crystal Drop Necklace", price: 5500, description: "Elegant necklace with sparkling crystal drops.", image: "https://placehold.co/400x400/40E0D0/000000?text=Crystal+Necklace" },
-                { name: "Minimalist Leather Wallet", price: 7500, description: "Slim and modern, made from genuine leather.", image: "https://placehold.co/400x400/D2B48C/FFFFFF?text=Leather+Wallet" },
-                { name: "Velvet Hair Scrunchies (Set of 3)", price: 1200, description: "Soft and stylish scrunchies in various colors.", image: "https://placehold.co/400x400/6A0DAD/FFFFFF?text=Scrunchies" },
-                { name: "Geometric Gold Cuff", price: 6800, description: "A unique geometric design in polished gold.", image: "https://placehold.co/400x400/FFD700/000000?text=Gold+Cuff" },
-                { name: "Chunky Knit Beanie", price: 2100, description: "Warm and cozy, perfect for chilly weather.", image: "https://placehold.co/400x400/D8BFD8/000000?text=Knit+Beanie" },
-                { name: "Faux Fur Earmuffs", price: 1900, description: "Stay warm in style with these plush earmuffs.", image: "https://placehold.co/400x400/CD853F/FFFFFF?text=Earmuffs" },
-                { name: "Circular Sunglasses", price: 2800, description: "Trendy circular frames with UV protection.", image: "https://placehold.co/400x400/000000/FFFFFF?text=Sunglasses" },
-                { name: "Floral Print Bandana", price: 700, description: "Versatile accessory for your hair or neck.", image: "https://placehold.co/400x400/FF69B4/000000?text=Bandana" },
-                { name: "Statement Brooch", price: 3400, description: "A vintage-inspired brooch for a touch of class.", image: "https://placehold.co/400x400/B22222/FFFFFF?text=Brooch" },
-                { name: "Satin Headband", price: 1100, description: "Smooth satin for a sleek and elegant look.", image: "https://placehold.co/400x400/FFC0CB/000000?text=Headband" },
-                { name: "Braided Leather Belt", price: 4200, description: "A classic braided belt with a modern twist.", image: "https://placehold.co/400x400/8B4513/FFFFFF?text=Leather+Belt" },
-                { name: "Tote Bag with Pockets", price: 6500, description: "Spacious tote with multiple compartments.", image: "https://placehold.co/400x400/A9A9A9/FFFFFF?text=Tote+Bag" },
-                { name: "Opalite Stone Pendant", price: 2700, description: "A stunning pendant that catches the light beautifully.", image: "https://placehold.co/400x400/AFEEEE/000000?text=Opalite+Pendant" },
-                { name: "Chain Link Earrings", price: 3600, description: "Modern and bold chain link design.", image: "https://placehold.co/400x400/34495E/FFFFFF?text=Chain+Earrings" },
-                { name: "Straw Sun Hat", price: 4900, description: "A stylish sun hat for beach days or summer outings.", image: "https://placehold.co/400x400/F4A460/000000?text=Sun+Hat" },
-                { name: "Acrylic Hoop Earrings", price: 900, description: "Lightweight and colorful acrylic hoops.", image: "https://placehold.co/400x400/FFDAB9/000000?text=Hoop+Earrings" },
-                { name: "Woven Wristband", price: 400, description: "Handwoven friendship bracelet-style wristband.", image: "https://placehold.co/400x400/87CEEB/FFFFFF?text=Wristband" },
-                { name: "Mini Backpack", price: 8000, description: "Compact and chic, perfect for your essentials.", image: "https://placehold.co/400x400/778899/FFFFFF?text=Mini+Backpack" },
-                { name: "Vintage Square Scarf", price: 2300, description: "A retro-inspired scarf with a unique pattern.", image: "https://placehold.co/400x400/DDA0DD/000000?text=Square+Scarf" },
-                { name: "Silver Herringbone Chain", price: 5900, description: "Sleek and flat chain that lies perfectly on the neck.", image: "https://placehold.co/400x400/D3D3D3/000000?text=Herringbone+Chain" },
-                { name: "Pearl Hair Clips (Set of 2)", price: 1500, description: "Elegant pearl clips to add a sophisticated touch.", image: "https://placehold.co/400x400/F5F5DC/000000?text=Hair+Clips" },
-                { name: "Classic Aviator Glasses", price: 3000, description: "Timeless aviator style, non-prescription.", image: "https://placehold.co/400x400/4682B4/FFFFFF?text=Aviator+Glasses" },
-                { name: "Silk Twilly", price: 1700, description: "A thin silk scarf for styling bags or hair.", image: "https://placehold.co/400x400/F08080/FFFFFF?text=Twilly+Scarf" },
-                { name: "Velvet Choker", price: 950, description: "A simple, classic black velvet choker.", image: "https://placehold.co/400x400/1C1C1C/FFFFFF?text=Velvet+Choker" },
-                { name: "Heart-Shaped Locket", price: 4700, description: "A romantic and delicate heart-shaped locket.", image: "https://placehold.co/400x400/FF69B4/FFFFFF?text=Heart+Locket" },
-                { name: "Gold-Dipped Leaf Earrings", price: 2900, description: "Real leaves dipped in gold for a natural look.", image: "https://placehold.co/400x400/BDB76B/000000?text=Leaf+Earrings" },
-                { name: "Cotton Canvas Belt", price: 2000, description: "A casual and durable cotton belt.", image: "https://placehold.co/400x400/808080/FFFFFF?text=Canvas+Belt" },
-                { name: "Gemstone Ring", price: 7200, description: "A handcrafted ring with a striking gemstone.", image: "https://placehold.co/400x400/9932CC/FFFFFF?text=Gemstone+Ring" },
-                { name: "Acrylic Hair Claw", price: 1400, description: "A stylish and sturdy hair claw for quick updos.", image: "https://placehold.co/400x400/F5F5DC/000000?text=Hair+Claw" },
-                { name: "Thin Leather Crossbody Bag", price: 9200, description: "A sleek, minimalist bag for daily use.", image: "https://placehold.co/400x400/4B3621/FFFFFF?text=Crossbody+Bag" }
-            ];
-
-            const productPromises = initialProducts.map(product => addDoc(productsCollectionRef, product));
-            await Promise.all(productPromises);
-            
-            showMessage("Initial products added successfully!");
-
-            if (addProductsBtn) addProductsBtn.disabled = false;
-        }
-
-        window.toggleModal = toggleModal;
-        window.handleAuth = handleAuth;
-        window.handleSignOut = handleSignOut;
-        window.openCheckoutModal = openCheckoutModal;
-        window.handleCheckout = handleCheckout;
-        window.confirmPayment = confirmPayment;
-        window.copyAccountNumber = copyAccountNumber;
-        window.addInitialProducts = addInitialProducts;
-        window.togglePaymentDetails = togglePaymentDetails;
-    </script>
-
-    <!-- Header -->
-    <header class="w-full max-w-4xl flex justify-between items-center py-6 px-4 bg-white bg-opacity-90 rounded-full shadow-lg backdrop-filter backdrop-blur-sm">
-        <div class="flex items-center space-x-2">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-pink-600">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
-            </svg>
-            <h1 class="text-3xl font-bold text-gray-800">D'Treasures</h1>
-        </div>
-        <div class="flex items-center space-x-4">
-            <button id="auth-button" class="px-6 py-3 bg-purple-600 text-white font-semibold rounded-full shadow-md hover:bg-purple-700 transition-colors">
-                Sign In / Sign Up
-            </button>
-            <button class="relative px-6 py-3 bg-pink-600 text-white font-semibold rounded-full hover:bg-pink-700 transition-colors" onclick="toggleModal('cart-modal')">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6 inline-block mr-2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l-2.25 2.25m0 0l-2.25 2.25m2.25-2.25L13.5 14.25m-2.25-2.25L9 10.5m4.5-4.5a.75.75 0 01.75-.75h3.75a.75.75 0 01.75.75v3.75a.75.75 0 01-.75.75h-3.75a.75.75 0 01-.75-.75V6zM9 14.25L6.75 12m0 0L4.5 9.75M6.75 12a.75.75 0 01.75-.75h2.25a.75.75 0 01.75.75v2.25a.75.75 0 01-.75.75H7.5a.75.75 0 01-.75-.75V12z" />
-                </svg>
-                View Cart
-                <span id="cart-count" class="absolute top-0 right-0 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-red-100 transform translate-x-1/2 -translate-y-1/2 bg-red-600 rounded-full hidden">0</span>
-            </button>
-        </div>
-    </header>
-
-    <!-- Main Content -->
-    <main class="w-full max-w-4xl my-10">
-        <p id="user-display" class="text-center text-sm text-gray-600 mb-6">You are not signed in.</p>
-        <section class="text-center mb-12">
-            <h2 class="text-4xl font-extrabold text-white mb-4">Discover Your New Favorite</h2>
-            <p class="text-lg text-gray-100 mb-6">Explore our curated collection of accessories and fashion treasures.</p>
-        </section>
-
-        <div class="flex justify-center mb-8 space-x-4">
-            <a href="https://dtreasures.carrd.co" target="_blank" class="inline-block bg-purple-600 text-white font-bold py-3 px-6 rounded-full hover:bg-purple-700 transition-colors shadow-lg">
-                Visit D'Treasures
-            </a>
-            <button id="add-products-btn" class="px-6 py-3 bg-indigo-600 text-white font-bold rounded-full shadow-lg hover:bg-indigo-700 transition-colors hidden" onclick="addInitialProducts()">
-                Add Initial Products
-            </button>
-        </div>
-
-        <!-- Product Grid -->
-        <section id="product-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-            <div id="loading-indicator" class="col-span-1 sm:col-span-2 lg:col-span-3 flex flex-col items-center justify-center p-8 text-gray-500">
-                <div class="spinner mb-4"></div>
-                <p class="text-lg font-semibold">Curating your treasures...</p>
-            </div>
-        </section>
-    </main>
-    
-    <!-- Custom Message Box -->
-    <div id="message-box" class="fixed top-4 left-1/2 -translate-x-1/2 opacity-0 transform transition-all duration-300 ease-in-out">
-        <div class="bg-gray-800 text-white px-6 py-3 rounded-full shadow-lg flex items-center space-x-2">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6 text-green-400">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span id="message-text"></span>
-        </div>
+<body class="bg-pink-50 text-gray-800">
+  <!-- Header -->
+  <header class="bg-pink-400 text-white p-4 flex justify-between items-center shadow-md">
+    <h1 class="text-2xl font-extrabold tracking-tight">💎 D'Treasures</h1>
+    <div class="flex items-center gap-2">
+      <button onclick="openCart()" class="relative bg-white text-pink-600 px-4 py-2 rounded-full font-semibold shadow">
+        🛒 Cart <span id="cart-count" class="ml-1 bg-pink-600 text-white rounded-full px-2">0</span>
+      </button>
     </div>
+  </header>
 
-    <!-- Auth Modal -->
-    <div id="auth-modal" class="fixed inset-0 flex items-center justify-center z-50 modal-overlay hidden p-4">
-        <div class="bg-white rounded-3xl p-8 shadow-2xl max-w-md w-full">
-            <div class="flex justify-between items-center mb-6">
-                <h3 class="text-2xl font-bold">Sign In / Sign Up</h3>
-                <button onclick="toggleModal('auth-modal')" class="text-gray-500 hover:text-gray-800 transition-colors">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
-            </div>
-            
-            <!-- Login Form -->
-            <form id="signin-form" onsubmit="event.preventDefault(); handleAuth(event);" class="space-y-4">
-                <div class="mb-4">
-                    <label class="block text-gray-700 font-bold mb-2" for="signin-email">Email</label>
-                    <input class="w-full px-4 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-600" type="email" id="signin-email" name="email" required>
-                </div>
-                <div class="mb-4">
-                    <label class="block text-gray-700 font-bold mb-2" for="signin-password">Password</label>
-                    <input class="w-full px-4 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-600" type="password" id="signin-password" name="password" required>
-                </div>
-                <button type="submit" class="w-full px-6 py-3 bg-purple-600 text-white font-bold rounded-full hover:bg-purple-700 transition-colors">
-                    Sign In
-                </button>
-            </form>
-            
-            <p class="text-center text-gray-500 my-4">- OR -</p>
-            
-            <!-- Signup Form -->
-            <form id="signup-form" onsubmit="event.preventDefault(); handleAuth(event);" class="space-y-4">
-                 <p class="text-center text-gray-600">Don't have an account? Sign up below.</p>
-                <div class="mb-4">
-                    <label class="block text-gray-700 font-bold mb-2" for="signup-email">Email</label>
-                    <input class="w-full px-4 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-600" type="email" id="signup-email" name="email" required>
-                </div>
-                <div class="mb-4">
-                    <label class="block text-gray-700 font-bold mb-2" for="signup-password">Password</label>
-                    <input class="w-full px-4 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-600" type="password" id="signup-password" name="password" required>
-                </div>
-                <button type="submit" class="w-full px-6 py-3 bg-pink-600 text-white font-bold rounded-full hover:bg-pink-700 transition-colors">
-                    Sign Up
-                </button>
-            </form>
-        </div>
+  <!-- Category Filters -->
+  <section class="p-4 flex flex-wrap gap-3 justify-center">
+    <span class="pill" onclick="filterProducts('all')">All</span>
+    <span class="pill" onclick="filterProducts('bags')">Bags</span>
+    <span class="pill" onclick="filterProducts('shoes')">Shoes</span>
+    <span class="pill" onclick="filterProducts('makeup')">Makeup</span>
+    <span class="pill" onclick="filterProducts('perfume')">Perfume</span>
+    <span class="pill" onclick="filterProducts('hair')">Hair</span>
+    <span class="pill" onclick="filterProducts('clothes')">Clothes</span>
+    <span class="pill" onclick="filterProducts('accessories')">Accessories</span>
+    <span class="pill" onclick="filterProducts('skincare')">Skincare</span>
+  </section>
+
+  <!-- Products -->
+  <main class="p-6">
+    <div id="products-container" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6"></div>
+  </main>
+
+  <!-- Cart Modal -->
+  <div id="cart-modal" class="fixed inset-0 hidden bg-black/40 backdrop-blur-sm flex justify-center items-center z-50">
+    <div class="bg-white rounded-2xl p-6 w-[95%] max-w-lg shadow-xl">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-bold text-pink-600">Your Cart</h2>
+        <button class="text-gray-500 hover:text-gray-700" onclick="closeCart()">✕</button>
+      </div>
+      <div id="cart-items" class="mb-4 max-h-80 overflow-y-auto"></div>
+      <div class="flex justify-between items-center border-t pt-3">
+        <span class="font-semibold">Total</span>
+        <span class="font-extrabold text-pink-600" id="cart-total">₦0</span>
+      </div>
+      <div class="mt-4 flex justify-between">
+        <button onclick="closeCart()" class="px-4 py-2 rounded-full bg-gray-200">Close</button>
+        <button onclick="openCheckout()" class="px-4 py-2 rounded-full btn-pink">Proceed to Checkout</button>
+      </div>
     </div>
+  </div>
 
-    <!-- Cart Modal -->
-    <div id="cart-modal" class="fixed inset-0 hidden flex items-center justify-center z-50 modal-overlay p-4">
-        <div class="bg-white rounded-3xl p-8 shadow-2xl max-w-lg w-full">
-            <div class="flex justify-between items-center mb-6">
-                <h3 class="text-2xl font-bold">Your Cart</h3>
-                <button onclick="toggleModal('cart-modal')" class="text-gray-500 hover:text-gray-800 transition-colors">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
-            </div>
-            <ul id="cart-list" class="space-y-4 max-h-80 overflow-y-auto mb-6">
-                <!-- Cart items will be dynamically inserted here -->
-            </ul>
-            <div class="flex justify-between items-center border-t-2 border-dashed pt-4">
-                <span class="text-xl font-bold">Total:</span>
-                <span id="cart-total" class="text-xl font-bold text-pink-600">₦0.00</span>
-            </div>
-            <button id="checkout-button" class="mt-6 w-full py-3 bg-pink-600 text-white font-bold rounded-full hover:bg-pink-700 transition-colors" onclick="openCheckoutModal()">
-                Proceed to Checkout
-            </button>
+  <!-- Checkout Modal -->
+  <div id="checkout-modal" class="fixed inset-0 hidden bg-black/40 backdrop-blur-sm flex justify-center items-center z-50">
+    <div class="bg-white rounded-2xl p-0 w-[95%] max-w-3xl shadow-xl overflow-hidden">
+      <!-- Header -->
+      <div class="p-5 bg-gradient-to-r from-pink-300 to-pink-400 text-white">
+        <div class="flex items-center justify-between">
+          <h2 class="text-xl font-extrabold">Secure Checkout</h2>
+          <button class="text-white/90 hover:text-white" onclick="closeCheckout()">✕</button>
         </div>
-    </div>
+        <p class="text-sm opacity-90 mt-1">Complete your order in two easy steps.</p>
+      </div>
 
-    <!-- Checkout Modal -->
-    <div id="checkout-modal" class="fixed inset-0 hidden flex items-center justify-center z-50 modal-overlay p-4">
-        <div class="bg-white rounded-3xl p-8 shadow-2xl max-w-lg w-full">
-            <div class="flex justify-between items-center mb-6">
-                <h3 class="text-2xl font-bold">Checkout</h3>
-                <button onclick="toggleModal('checkout-modal')" class="text-gray-500 hover:text-gray-800 transition-colors">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
+      <div class="grid md:grid-cols-5 gap-0">
+        <!-- Left: Forms -->
+        <div class="md:col-span-3 p-5 space-y-4">
+          <!-- Customer Info -->
+          <div class="bg-pink-50 border border-pink-100 rounded-xl p-4">
+            <h3 class="font-bold text-pink-700 mb-3">Contact & Delivery</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <input id="cust-name" class="px-3 py-2 rounded-lg border" placeholder="Full Name" />
+              <input id="cust-email" class="px-3 py-2 rounded-lg border" placeholder="Email (for receipt)" type="email"/>
+              <input id="cust-phone" class="px-3 py-2 rounded-lg border" placeholder="Phone Number" />
+              <input id="cust-address" class="px-3 py-2 rounded-lg border md:col-span-2" placeholder="Delivery Address" />
             </div>
-            
-            <div class="mb-6">
-                <h4 class="text-lg font-bold mb-2">Order Summary</h4>
-                <ul id="checkout-summary-list" class="space-y-2 border border-gray-200 rounded-xl p-4">
-                    <!-- Summary items will be dynamically inserted here -->
-                </ul>
-                <div class="flex justify-between items-center pt-4 font-bold text-lg">
-                    <span>Total:</span>
-                    <span id="checkout-total" class="text-pink-600">₦0.00</span>
-                </div>
-            </div>
+          </div>
 
-            <div class="mb-6">
-                <h4 class="text-lg font-bold mb-2">Payment Method</h4>
-                <div class="space-y-3">
-                    <label class="flex items-center space-x-3 p-4 border border-gray-300 rounded-xl cursor-pointer hover:bg-gray-100 transition-colors">
-                        <input type="radio" name="payment-method" value="card" class="form-radio h-5 w-5 text-pink-600" onchange="togglePaymentDetails()">
-                        <span class="font-semibold text-gray-800">Credit / Debit Card</span>
-                    </label>
-                    <label class="flex items-center space-x-3 p-4 border border-gray-300 rounded-xl cursor-pointer hover:bg-gray-100 transition-colors">
-                        <input type="radio" name="payment-method" value="bank-transfer" class="form-radio h-5 w-5 text-pink-600" checked onchange="togglePaymentDetails()">
-                        <span class="font-semibold text-gray-800">Bank Transfer</span>
-                    </label>
-                </div>
+          <!-- Payment Tabs -->
+          <div class="bg-white border rounded-xl">
+            <div class="flex">
+              <button id="tab-card" class="flex-1 py-2 text-center font-semibold tab-active rounded-tl-xl" onclick="switchTab('card')">💳 Card Payment</button>
+              <button id="tab-bank" class="flex-1 py-2 text-center font-semibold rounded-tr-xl" onclick="switchTab('bank')">🏦 Bank Transfer</button>
             </div>
-
-            <!-- Bank Transfer Details Section -->
-            <div id="bank-details-section" class="mt-4 p-4 border border-gray-300 rounded-xl">
-                <p class="text-sm font-bold mb-2 text-gray-600">Pay to the following account:</p>
-                <p class="text-2xl font-extrabold text-gray-800 mb-2" id="account-number">1234567890</p>
-                <p class="text-sm font-semibold text-gray-500">Bank: Zenith Bank</p>
-                <button type="button" onclick="copyAccountNumber()" class="mt-4 px-6 py-2 bg-blue-500 text-white rounded-full hover:bg-blue-600 transition-colors flex items-center space-x-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v-4.5m-3.75-2.25H9.75m1.5-1.5a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25v6.75A2.25 2.25 0 0118 15h-3.75a2.25 2.25 0 00-2.25 2.25v.75m-3.75-3.75h-3.75a2.25 2.25 0 01-2.25-2.25V9a2.25 2.25 0 012.25-2.25h3.75" />
-                    </svg>
-                    <span>Copy Account Number</span>
-                </button>
+            <!-- Card -->
+            <div id="pane-card" class="p-4 space-y-3">
+              <p class="text-sm text-gray-600">Pay securely with your card via Paystack.</p>
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <input id="card-number" class="px-3 py-2 rounded-lg border md:col-span-2" placeholder="Card Number (1234 5678 9012 3456)" />
+                <input id="card-cvv" class="px-3 py-2 rounded-lg border" placeholder="CVV" />
+                <input id="card-exp" class="px-3 py-2 rounded-lg border" placeholder="MM/YY" />
+              </div>
+              <button onclick="payWithPaystack()" class="w-full btn-pink px-4 py-3 rounded-full font-semibold">Pay Now with Paystack</button>
+              <p class="text-xs text-gray-500 text-center">You’ll be redirected in a secure popup. No card details are stored on this site.</p>
             </div>
-            
-            <!-- Card Details Section (initially hidden) -->
-            <div id="card-details-section" class="mt-4 p-4 border border-gray-300 rounded-xl hidden">
-                <div class="mb-4">
-                    <label class="block text-gray-700 font-bold mb-2" for="cardNumber">Card Number</label>
-                    <input class="w-full px-4 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-600" type="text" id="cardNumber" placeholder="0000 0000 0000 0000" required>
-                </div>
-                <div class="flex space-x-4 mb-4">
-                    <div class="w-1/2">
-                        <label class="block text-gray-700 font-bold mb-2" for="expDate">Expiry Date</label>
-                        <input class="w-full px-4 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-600" type="text" id="expDate" placeholder="MM/YY" required>
-                    </div>
-                    <div class="w-1/2">
-                        <label class="block text-gray-700 font-bold mb-2" for="cvc">CVC</label>
-                        <input class="w-full px-4 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-600" type="text" id="cvc" placeholder="CVC" required>
-                    </div>
-                </div>
-                <div class="mb-4">
-                    <label class="block text-gray-700 font-bold mb-2" for="cardName">Card Name</label>
-                    <input class="w-full px-4 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-600" type="text" id="cardName" placeholder="Cardholder's Name" required>
-                </div>
+            <!-- Bank -->
+            <div id="pane-bank" class="p-4 space-y-3 hidden">
+              <div class="bg-pink-50 border border-pink-100 rounded-xl p-3">
+                <p class="font-semibold">Account Name: <span class="text-pink-700">Adewuyi Oluwadamisola</span></p>
+                <p class="font-semibold">Account Number: <span id="account-number" class="text-pink-700">8086099611</span>
+                  <button onclick="copyAccountNumber()" class="ml-2 text-pink-600 underline">Copy</button>
+                </p>
+                <p class="text-sm text-gray-600 mt-2">After transfer, send your proof of payment on WhatsApp to confirm your order.</p>
+              </div>
+              <button onclick="openWhatsappProof()" class="w-full bg-green-500 hover:bg-green-600 text-white px-4 py-3 rounded-full font-semibold">Send Proof via WhatsApp</button>
+              <button onclick="confirmBankIntent()" class="w-full bg-gray-800 hover:bg-black text-white px-4 py-3 rounded-full font-semibold">I Have Transferred</button>
             </div>
-
-            <button id="pay-now-button" class="mt-6 w-full py-3 bg-pink-600 text-white font-bold rounded-full hover:bg-pink-700 transition-colors" onclick="confirmPayment()">
-                Confirm Payment
-            </button>
+          </div>
         </div>
+
+        <!-- Right: Summary -->
+        <div class="md:col-span-2 p-5 bg-rose-50 border-l">
+          <h3 class="font-bold text-pink-700 mb-3">Order Summary</h3>
+          <ul id="summary-list" class="space-y-2 max-h-64 overflow-y-auto"></ul>
+          <div class="mt-4 border-t pt-3 space-y-1">
+            <div class="flex justify-between"><span>Subtotal</span><span id="sum-subtotal">₦0</span></div>
+            <div class="flex justify-between"><span>Delivery</span><span id="sum-delivery">₦0</span></div>
+            <div class="flex justify-between font-extrabold text-pink-700"><span>Total</span><span id="sum-total">₦0</span></div>
+          </div>
+          <p class="text-xs text-gray-500 mt-3">Need help? Chat us on WhatsApp for quick support.</p>
+        </div>
+      </div>
     </div>
+  </div>
+
+  <!-- Success Modal -->
+  <div id="success-modal" class="fixed inset-0 hidden bg-black/40 backdrop-blur-sm flex justify-center items-center z-50">
+    <div class="bg-white rounded-2xl p-6 w-[95%] max-w-md text-center shadow-xl">
+      <h2 class="text-xl font-bold mb-2 text-pink-600">🎉 Payment Successful</h2>
+      <p class="text-gray-700">Thank you for shopping with <span class="font-semibold">D'Treasures</span>!</p>
+      <p class="text-sm text-gray-500 mt-1">Your order reference: <span id="success-ref" class="font-semibold"></span></p>
+      <button onclick="closeSuccess()" class="mt-4 btn-pink px-5 py-2 rounded-full">OK</button>
+    </div>
+  </div>
+
+  <script>
+    /* -----------------------
+       Product Catalog (40)
+    ------------------------ */
+    const products = [
+      { id: 1, name: "Classic Tote Bag", price: 8000, category: "bags", image: "https://via.placeholder.com/300x220?text=Tote+Bag" },
+      { id: 2, name: "Leather Handbag", price: 12000, category: "bags", image: "https://via.placeholder.com/300x220?text=Leather+Bag" },
+      { id: 3, name: "Casual Sneakers", price: 9500, category: "shoes", image: "https://via.placeholder.com/300x220?text=Sneakers" },
+      { id: 4, name: "Sport Shoes", price: 11000, category: "shoes", image: "https://via.placeholder.com/300x220?text=Sport+Shoes" },
+      { id: 5, name: "Lip Gloss Set", price: 3500, category: "makeup", image: "https://via.placeholder.com/300x220?text=Lip+Gloss" },
+      { id: 6, name: "Makeup Kit", price: 10000, category: "makeup", image: "https://via.placeholder.com/300x220?text=Makeup+Kit" },
+      { id: 7, name: "Perfume - Rose Scent", price: 7500, category: "perfume", image: "https://via.placeholder.com/300x220?text=Perfume+Rose" },
+      { id: 8, name: "Perfume - Ocean Breeze", price: 8500, category: "perfume", image: "https://via.placeholder.com/300x220?text=Perfume+Ocean" },
+      { id: 9, name: "Hair Packer (Natural)", price: 5000, category: "hair", image: "https://via.placeholder.com/300x220?text=Hair+Natural" },
+      { id:10, name: "Hair Packer (Synthetic)", price: 4000, category: "hair", image: "https://via.placeholder.com/300x220?text=Hair+Synthetic" },
+      { id:11, name: "Casual T-Shirt", price: 4500, category: "clothes", image: "https://via.placeholder.com/300x220?text=T-Shirt" },
+      { id:12, name: "Denim Jeans", price: 9500, category: "clothes", image: "https://via.placeholder.com/300x220?text=Jeans" },
+      { id:13, name: "Maxi Dress", price: 12000, category: "clothes", image: "https://via.placeholder.com/300x220?text=Maxi+Dress" },
+      { id:14, name: "Summer Gown", price: 8000, category: "clothes", image: "https://via.placeholder.com/300x220?text=Summer+Gown" },
+      { id:15, name: "Men's Polo", price: 6000, category: "clothes", image: "https://via.placeholder.com/300x220?text=Men+Polo" },
+      { id:16, name: "Formal Shirt", price: 7000, category: "clothes", image: "https://via.placeholder.com/300x220?text=Formal+Shirt" },
+      { id:17, name: "Wrist Watch (Casual)", price: 6500, category: "accessories", image: "https://via.placeholder.com/300x220?text=Watch+Casual" },
+      { id:18, name: "Wrist Watch (Luxury)", price: 15000, category: "accessories", image: "https://via.placeholder.com/300x220?text=Watch+Luxury" },
+      { id:19, name: "Ladies Sandals", price: 5500, category: "shoes", image: "https://via.placeholder.com/300x220?text=Sandals" },
+      { id:20, name: "Heels", price: 10000, category: "shoes", image: "https://via.placeholder.com/300x220?text=Heels" },
+      { id:21, name: "Men’s Loafers", price: 12000, category: "shoes", image: "https://via.placeholder.com/300x220?text=Loafers" },
+      { id:22, name: "Face Powder", price: 3000, category: "makeup", image: "https://via.placeholder.com/300x220?text=Face+Powder" },
+      { id:23, name: "Foundation", price: 4000, category: "makeup", image: "https://via.placeholder.com/300x220?text=Foundation" },
+      { id:24, name: "Concealer", price: 3500, category: "makeup", image: "https://via.placeholder.com/300x220?text=Concealer" },
+      { id:25, name: "Necklace Set", price: 7000, category: "accessories", image: "https://via.placeholder.com/300x220?text=Necklace" },
+      { id:26, name: "Bracelet", price: 2500, category: "accessories", image: "https://via.placeholder.com/300x220?text=Bracelet" },
+      { id:27, name: "Earrings Pack", price: 4000, category: "accessories", image: "https://via.placeholder.com/300x220?text=Earrings" },
+      { id:28, name: "Hand Chain", price: 3000, category: "accessories", image: "https://via.placeholder.com/300x220?text=Hand+Chain" },
+      { id:29, name: "Clutch Purse", price: 6500, category: "bags", image: "https://via.placeholder.com/300x220?text=Clutch" },
+      { id:30, name: "Backpack", price: 8500, category: "bags", image: "https://via.placeholder.com/300x220?text=Backpack" },
+      { id:31, name: "Body Lotion", price: 2500, category: "skincare", image: "https://via.placeholder.com/300x220?text=Body+Lotion" },
+      { id:32, name: "Face Cream", price: 2800, category: "skincare", image: "https://via.placeholder.com/300x220?text=Face+Cream" },
+      { id:33, name: "Hand Cream", price: 1800, category: "skincare", image: "https://via.placeholder.com/300x220?text=Hand+Cream" },
+      { id:34, name: "Scarf", price: 2000, category: "accessories", image: "https://via.placeholder.com/300x220?text=Scarf" },
+      { id:35, name: "Cap", price: 2200, category: "accessories", image: "https://via.placeholder.com/300x220?text=Cap" },
+      { id:36, name: "Sunglasses", price: 5000, category: "accessories", image: "https://via.placeholder.com/300x220?text=Sunglasses" },
+      { id:37, name: "Wallet", price: 4000, category: "accessories", image: "https://via.placeholder.com/300x220?text=Wallet" },
+      { id:38, name: "Belt", price: 3500, category: "accessories", image: "https://via.placeholder.com/300x220?text=Belt" },
+      { id:39, name: "Ankle Boots", price: 15000, category: "shoes", image: "https://via.placeholder.com/300x220?text=Ankle+Boots" },
+      { id:40, name: "Flip Flops", price: 2500, category: "shoes", image: "https://via.placeholder.com/300x220?text=Flip+Flops" }
+    ];
+
+    /* -----------------------
+       Cart + Helpers
+    ------------------------ */
+    let cart = JSON.parse(localStorage.getItem("cart") || "[]");
+    const N = (n) => n.toLocaleString('en-NG', { style: 'currency', currency: 'NGN' });
+    const plainN = (n) => `₦${n.toLocaleString('en-NG')}`;
+
+    function saveCart(){ localStorage.setItem("cart", JSON.stringify(cart)); updateCartCount(); }
+    function updateCartCount(){ document.getElementById("cart-count").textContent = cart.reduce((s,i)=>s+i.qty,0); }
+
+    function addToCart(id){
+      const p = products.find(x=>x.id===id);
+      const it = cart.find(x=>x.id===id);
+      if(it){ it.qty++; } else { cart.push({...p, qty:1}); }
+      saveCart();
+      toast(`${p.name} added to cart!`);
+    }
+
+    function renderProducts(filter="all"){
+      const c = document.getElementById("products-container"); c.innerHTML = "";
+      products.filter(p=>filter==="all"||p.category===filter).forEach(p=>{
+        c.innerHTML += `
+        <div class="bg-white rounded-2xl p-4 shadow hover:shadow-lg transition">
+          <img src="${p.image}" alt="${p.name}" class="w-full h-40 object-cover rounded-xl mb-3">
+          <h3 class="text-lg font-semibold">${p.name}</h3>
+          <p class="text-pink-600 font-extrabold">${plainN(p.price)}</p>
+          <button onclick="addToCart(${p.id})" class="mt-3 btn-pink px-4 py-2 rounded-full font-semibold w-full">❤️ Add to Cart</button>
+        </div>`;
+      });
+    }
+    function filterProducts(cat){ renderProducts(cat); }
+
+    /* -----------------------
+       Cart Modal
+    ------------------------ */
+    function openCart(){ renderCart(); document.getElementById("cart-modal").classList.remove("hidden"); }
+    function closeCart(){ document.getElementById("cart-modal").classList.add("hidden"); }
+
+    function renderCart(){
+      const box = document.getElementById("cart-items"); box.innerHTML = "";
+      let total = 0;
+      if(cart.length===0){ box.innerHTML = `<p class="text-center text-gray-500">Your cart is empty.</p>`; }
+      cart.forEach((i,idx)=>{
+        total += i.price * i.qty;
+        box.innerHTML += `
+          <div class="flex justify-between items-center mb-2 border-b pb-2">
+            <div class="w-7/12">
+              <p class="font-semibold">${i.name}</p>
+              <p class="text-sm text-gray-500">${plainN(i.price)}</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="changeQty(${idx},-1)" class="px-3 py-1 bg-gray-200 rounded-full">-</button>
+              <span>${i.qty}</span>
+              <button onclick="changeQty(${idx},1)" class="px-3 py-1 bg-gray-200 rounded-full">+</button>
+              <button onclick="removeItem(${idx})" class="ml-2 text-red-500">✕</button>
+            </div>
+          </div>`;
+      });
+      document.getElementById("cart-total").textContent = plainN(total);
+    }
+    function changeQty(i,d){ cart[i].qty += d; if(cart[i].qty <= 0) cart.splice(i,1); saveCart(); renderCart(); }
+    function removeItem(i){ cart.splice(i,1); saveCart(); renderCart(); }
+
+    /* -----------------------
+       Checkout UI
+    ------------------------ */
+    function openCheckout(){
+      if(cart.length===0){ toast('Your cart is empty.'); return; }
+      document.getElementById("checkout-modal").classList.remove("hidden");
+      closeCart();
+      renderSummary();
+      switchTab('card'); // default
+    }
+    function closeCheckout(){ document.getElementById("checkout-modal").classList.add("hidden"); }
+
+    function switchTab(which){
+      const tabCard = document.getElementById('tab-card');
+      const tabBank = document.getElementById('tab-bank');
+      const paneCard = document.getElementById('pane-card');
+      const paneBank = document.getElementById('pane-bank');
+      if(which==='card'){
+        tabCard.classList.add('tab-active'); tabBank.classList.remove('tab-active');
+        paneCard.classList.remove('hidden'); paneBank.classList.add('hidden');
+      } else {
+        tabBank.classList.add('tab-active'); tabCard.classList.remove('tab-active');
+        paneBank.classList.remove('hidden'); paneCard.classList.add('hidden');
+      }
+    }
+
+    function renderSummary(){
+      const ul = document.getElementById("summary-list");
+      const subtotal = cart.reduce((s,i)=>s + i.price*i.qty, 0);
+      const delivery = 0; // flat fee if you want later
+      const total = subtotal + delivery;
+      ul.innerHTML = "";
+      cart.forEach(i=>{
+        ul.innerHTML += `
+          <li class="flex justify-between text-sm">
+            <span>${i.name} x${i.qty}</span>
+            <span>${plainN(i.price*i.qty)}</span>
+          </li>`;
+      });
+      document.getElementById("sum-subtotal").textContent = plainN(subtotal);
+      document.getElementById("sum-delivery").textContent = plainN(delivery);
+      document.getElementById("sum-total").textContent = plainN(total);
+    }
+
+    /* -----------------------
+       Bank Transfer helpers
+    ------------------------ */
+    function copyAccountNumber(){
+      const acct = document.getElementById("account-number").textContent.trim();
+      navigator.clipboard.writeText(acct);
+      toast("Account number copied!");
+    }
+
+    function openWhatsappProof(){
+      const name = (document.getElementById('cust-name').value||'').trim() || 'Customer';
+      const phone = (document.getElementById('cust-phone').value||'').trim();
+      const address = (document.getElementById('cust-address').value||'').trim();
+      const list = cart.map(i=>`${i.name} x${i.qty} = ${plainN(i.price*i.qty)}`).join('%0A');
+      const total = cart.reduce((s,i)=>s + i.price*i.qty, 0);
+      const msg = `Hello D'Treasures,%0A%0AI have transferred for my order.%0A%0AName: ${encodeURIComponent(name)}%0APhone: ${encodeURIComponent(phone)}%0AAddress: ${encodeURIComponent(address)}%0A%0AItems:%0A${list}%0A%0ATotal: ${encodeURIComponent(plainN(total))}%0A%0AHere is my proof of payment.`;
+      // Replace with your WhatsApp number in international format, e.g., 2348012345678
+      const yourWhatsApp = '2348012345678';
+      window.open(`https://wa.me/${yourWhatsApp}?text=${msg}`, '_blank');
+    }
+
+    function confirmBankIntent(){
+      toast("Thanks! We’ll verify your transfer shortly.");
+      closeCheckout();
+    }
+
+    /* -----------------------
+       Paystack (Real Payment)
+    ------------------------ */
+    function generateRef(){
+      const t = Date.now().toString(36);
+      const r = Math.random().toString(36).slice(2,8);
+      return `DT${t}${r}`.toUpperCase();
+    }
+
+    function payWithPaystack(){
+      // Validate customer info
+      const name = (document.getElementById('cust-name').value||'').trim();
+      const email = (document.getElementById('cust-email').value||'').trim();
+      const phone = (document.getElementById('cust-phone').value||'').trim();
+      const address = (document.getElementById('cust-address').value||'').trim();
+      if(!name || !email){ toast("Please enter your name and email."); return; }
+
+      const amountNGN = cart.reduce((s,i)=>s + i.price*i.qty, 0);
+      if(amountNGN <= 0){ toast("Your cart is empty."); return; }
+
+      const reference = generateRef();
+
+      const handler = PaystackPop.setup({
+        key: 'YOUR_PAYSTACK_PUBLIC_KEY', // TODO: replace with your real public key
+        email,
+        amount: amountNGN * 100, // kobo
+        currency: 'NGN',
+        ref: reference,
+        metadata: {
+          custom_fields: [
+            { display_name: "Customer Name", variable_name: "customer_name", value: name },
+            { display_name: "Phone", variable_name: "customer_phone", value: phone },
+            { display_name: "Address", variable_name: "delivery_address", value: address },
+            { display_name: "Items", variable_name: "order_items", value: cart.map(i=>`${i.name}x${i.qty}`).join(', ') }
+          ]
+        },
+        callback: function(response){
+          // Payment successful
+          const ref = response.reference || reference;
+          closeCheckout();
+          cart = []; saveCart();
+          document.getElementById('success-ref').textContent = ref;
+          document.getElementById('success-modal').classList.remove('hidden');
+        },
+        onClose: function(){
+          toast('Payment window closed.');
+        }
+      });
+      handler.openIframe();
+    }
+
+    /* -----------------------
+       Success Modal
+    ------------------------ */
+    function closeSuccess(){ document.getElementById("success-modal").classList.add("hidden"); }
+
+    /* -----------------------
+       Tiny Toast
+    ------------------------ */
+    function toast(msg){
+      const id = 'toast-box';
+      let box = document.getElementById(id);
+      if(!box){
+        box = document.createElement('div');
+        box.id = id;
+        box.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[9999]';
+        document.body.appendChild(box);
+      }
+      const el = document.createElement('div');
+      el.className = 'bg-gray-900 text-white px-4 py-2 rounded-full shadow mb-2';
+      el.textContent = msg;
+      box.appendChild(el);
+      setTimeout(()=>{ el.remove(); }, 2500);
+    }
+
+    /* -----------------------
+       Init
+    ------------------------ */
+    renderProducts();
+    updateCartCount();
+  </script>
 </body>
 </html>
